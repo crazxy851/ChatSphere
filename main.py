@@ -1,6 +1,5 @@
 """
-ChatSphere - Premium Python FastAPI Backend 
-Features: Persistent SQLite, Global WebSockets, DMs, Groups, Media Uploads, Message Deletion, View-Once Popups
+ChatSphere Nexus - Production Fixed Backend
 """
 
 import asyncio
@@ -22,10 +21,12 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from fastapi.responses import FileResponse, HTMLResponse
 import uvicorn
 
 app = FastAPI(title="ChatSphere Nexus")
 
+# Enable global CORS handling for production web requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -34,31 +35,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Ensure folders exist
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-
-# Serve sw.js and manifest.json directly from the app root
-from fastapi.responses import FileResponse, HTMLResponse
-
-@app.get("/sw.js")
-async def service_worker():
-    if Path("sw.js").exists():
-        return FileResponse("sw.js", media_type="application/javascript",
-                            headers={"Service-Worker-Allowed": "/"})
-    return HTMLResponse("// SW not found", media_type="application/javascript")
-
-@app.get("/manifest.json")
-async def manifest():
-    if Path("manifest.json").exists():
-        return FileResponse("manifest.json", media_type="application/manifest+json")
-    return HTMLResponse("{}", media_type="application/json")
-
-@app.get("/")
-async def serve_index():
-    if Path("index.html").exists():
-        return FileResponse("index.html", media_type="text/html")
-    return HTMLResponse("<h1>ChatSphere</h1>")
 
 DB_PATH = "chatsphere.db"
 
@@ -144,6 +124,21 @@ class ConnectionManager:
                 self.disconnect(user_id)
 
 manager = ConnectionManager()
+
+# ─────────────────────────────────────────
+#  Production App Shell Routing
+# ─────────────────────────────────────────
+@app.get("/sw.js")
+async def service_worker():
+    if Path("sw.js").exists():
+        return FileResponse("sw.js", media_type="application/javascript")
+    return HTMLResponse("// SW not found", media_type="application/javascript")
+
+@app.get("/manifest.json")
+async def manifest():
+    if Path("manifest.json").exists():
+        return FileResponse("manifest.json", media_type="application/manifest+json")
+    return HTMLResponse("{}", media_type="application/json")
 
 # ─────────────────────────────────────────
 #  REST API Routes
@@ -336,13 +331,12 @@ async def upload_avatar(user_id: str = Form(...), file: UploadFile = File(...), 
     return {"avatar_url": avatar_url}
 
 # ─────────────────────────────────────────
-#  Global WebSocket Endpoint (Fixed Isolation)
+#  Global WebSocket Connection Endpoint
 # ─────────────────────────────────────────
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
     await manager.connect(websocket, user_id)
     
-    # Grab initial context profile details cleanly
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute("SELECT display_name, avatar_url FROM users WHERE id = ?", (user_id,))
@@ -360,7 +354,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 msg_id = str(uuid.uuid4())
                 now = datetime.utcnow().isoformat()
                 
-                # Atomic Context Session
                 async with aiosqlite.connect(DB_PATH) as db:
                     db.row_factory = aiosqlite.Row
                     await db.execute("""
@@ -428,5 +421,9 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     except WebSocketDisconnect:
         manager.disconnect(user_id)
 
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
+# Catch-all rule mounted strictly LAST to protect WebSocket route headers
+@app.get("/{catchall:path}")
+async def serve_index(catchall: str):
+    if Path("index.html").exists():
+        return FileResponse("index.html", media_type="text/html")
+    return HTMLResponse("<h1>ChatSphere Ready</h1>")
