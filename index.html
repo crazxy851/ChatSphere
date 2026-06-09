@@ -895,13 +895,14 @@
 
 <script>
 // ═══════════════════════════════════════════════
-//  CONFIG & STATE
+//  CONFIG & STATE - HARDENED FOR RENDER PROXY HOOKS
 // ═══════════════════════════════════════════════
 const HOST = window.location.hostname;
 const IS_SECURE = window.location.protocol === 'https:';
+
+// Ensure standard single-origin host bindings without trailing local port conflicts
 const API = IS_SECURE ? `https://${HOST}` : `http://${HOST}:8000`;
 const WS_BASE = IS_SECURE ? `wss://${HOST}` : `ws://${HOST}:8000`;
-
 let user = null, ws = null;
 let currentRoom = null, currentRoomName = null;
 let currentTab = 'dm';
