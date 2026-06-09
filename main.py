@@ -336,30 +336,33 @@ async def upload_avatar(user_id: str = Form(...), file: UploadFile = File(...), 
     return {"avatar_url": avatar_url}
 
 # ─────────────────────────────────────────
-#  Global WebSocket Endpoint
+#  Global WebSocket Endpoint (Fixed Isolation)
 # ─────────────────────────────────────────
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
     await manager.connect(websocket, user_id)
     
+    # Grab initial context profile details cleanly
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        
         cursor = await db.execute("SELECT display_name, avatar_url FROM users WHERE id = ?", (user_id,))
         user_info = dict(await cursor.fetchone() or {})
         
-        try:
-            while True:
-                data = await websocket.receive_json()
-                event = data.get("type")
+    try:
+        while True:
+            data = await websocket.receive_json()
+            event = data.get("type")
 
-                if event == "message":
-                    room_id = data.get("room_id")
-                    content = data.get("content", "")
-                    is_vo = data.get("is_view_once", False)
-                    msg_id = str(uuid.uuid4())
-                    now = datetime.utcnow().isoformat()
-                    
+            if event == "message":
+                room_id = data.get("room_id")
+                content = data.get("content", "")
+                is_vo = data.get("is_view_once", False)
+                msg_id = str(uuid.uuid4())
+                now = datetime.utcnow().isoformat()
+                
+                # Atomic Context Session
+                async with aiosqlite.connect(DB_PATH) as db:
+                    db.row_factory = aiosqlite.Row
                     await db.execute("""
                         INSERT INTO messages (id, room_id, sender_id, content, message_type, is_view_once, is_viewed, timestamp)
                         VALUES (?, ?, ?, ?, 'text', ?, 0, ?)
@@ -372,52 +375,58 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                     c3 = await db.execute("SELECT user_id FROM room_members WHERE room_id = ?", (room_id,))
                     members = await c3.fetchall()
                     
-                    broadcast_msg = {
-                        "type": "new_message",
-                        "message": {
-                            "id": msg_id, "room_id": room_id, "sender_id": user_id,
-                            "content": content, "message_type": "text",
-                            "is_view_once": is_vo, "sender_name": user_info.get("display_name"),
-                            "sender_avatar": user_info.get("avatar_url"),
-                            "room_name": room_info['name'] if room_info else "Chat",
-                            "is_dm": room_info['is_dm'] if room_info else False
-                        }
+                broadcast_msg = {
+                    "type": "new_message",
+                    "message": {
+                        "id": msg_id, "room_id": room_id, "sender_id": user_id,
+                        "content": content, "message_type": "text",
+                        "is_view_once": is_vo, "sender_name": user_info.get("display_name"),
+                        "sender_avatar": user_info.get("avatar_url"),
+                        "room_name": room_info['name'] if room_info else "Chat",
+                        "is_dm": room_info['is_dm'] if room_info else False
                     }
-                    
-                    for m in members:
-                        target_id = m['user_id']
-                        if room_info and room_info['is_dm'] and target_id != user_id:
-                            broadcast_msg["message"]["room_name"] = user_info.get("display_name")
-                        await manager.send_to_user(target_id, broadcast_msg)
+                }
+                
+                for m in members:
+                    target_id = m['user_id']
+                    if room_info and room_info['is_dm'] and target_id != user_id:
+                        broadcast_msg["message"]["room_name"] = user_info.get("display_name")
+                    await manager.send_to_user(target_id, broadcast_msg)
                         
-                elif event == "viewed_once":
-                    msg_id = data.get("msg_id")
-                    room_id = data.get("room_id")
+            elif event == "viewed_once":
+                msg_id = data.get("msg_id")
+                room_id = data.get("room_id")
+                
+                async with aiosqlite.connect(DB_PATH) as db:
+                    db.row_factory = aiosqlite.Row
                     await db.execute("UPDATE messages SET is_viewed = 1 WHERE id = ?", (msg_id,))
                     await db.commit()
-                    
                     c3 = await db.execute("SELECT user_id FROM room_members WHERE room_id = ?", (room_id,))
-                    for m in await c3.fetchall():
-                        await manager.send_to_user(m['user_id'], {"type": "message_destroyed", "msg_id": msg_id, "room_id": room_id})
-
-                elif event == "delete_message":
-                    msg_id = data.get("msg_id")
-                    room_id = data.get("room_id")
+                    members = await c3.fetchall()
                     
-                    # WhatsApp style: update record row info to show it's deleted instead of dropping completely
+                for m in members:
+                    await manager.send_to_user(m['user_id'], {"type": "message_destroyed", "msg_id": msg_id, "room_id": room_id})
+
+            elif event == "delete_message":
+                msg_id = data.get("msg_id")
+                room_id = data.get("room_id")
+                
+                async with aiosqlite.connect(DB_PATH) as db:
+                    db.row_factory = aiosqlite.Row
                     await db.execute("""
                         UPDATE messages 
                         SET content = '🚫 This message was deleted', message_type = 'text', file_url = NULL, file_name = NULL 
                         WHERE id = ?
                     """, (msg_id,))
                     await db.commit()
-                    
                     c3 = await db.execute("SELECT user_id FROM room_members WHERE room_id = ?", (room_id,))
-                    for m in await c3.fetchall():
-                        await manager.send_to_user(m['user_id'], {"type": "message_deleted", "msg_id": msg_id, "room_id": room_id})
+                    members = await c3.fetchall()
+                    
+                for m in members:
+                    await manager.send_to_user(m['user_id'], {"type": "message_deleted", "msg_id": msg_id, "room_id": room_id})
 
-        except WebSocketDisconnect:
-            manager.disconnect(user_id)
+    except WebSocketDisconnect:
+        manager.disconnect(user_id)
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
