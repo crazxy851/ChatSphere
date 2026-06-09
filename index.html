@@ -453,28 +453,71 @@
 
     /* COMPOSER */
     .composer {
-      padding: 12px 16px calc(12px + var(--safe-bottom));
-      background: var(--bg1);
-      border-top: 1px solid var(--border);
-      display: none;
-    }
-    .composer-inner {
-      display: flex; align-items: center; gap: 8px;
-      background: var(--bg2); border: 1px solid var(--border);
-      border-radius: 24px; padding: 6px 6px 6px 16px;
-      transition: 0.2s;
-    }
-    .composer-inner:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(124,58,237,0.1); }
-    .composer-input { flex: 1; background: none; border: none; color: var(--text0); font-size: 15px; max-height: 120px; resize: none; line-height: 1.5; }
-    .composer-input::placeholder { color: var(--text2); }
-    .composer-extras { display: flex; align-items: center; gap: 4px; }
-    .comp-btn { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 18px; color: var(--text2); }
-    .comp-btn:hover { background: var(--bg3); color: var(--text0); }
-    .comp-btn.vo-active { color: var(--gold); background: rgba(245,158,11,0.12); }
-    .comp-btn.send { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: white; box-shadow: 0 2px 10px var(--glow); }
-    .comp-btn.send:hover { transform: scale(1.08); }
-    .comp-btn.send:active { transform: scale(0.95); }
-
+  padding: 12px 16px calc(12px + var(--safe-bottom));
+  background: var(--bg1);
+  border-top: 1px solid var(--border);
+  position: relative;
+  z-index: 100;
+  display: none; /* Keeps it hidden until a room opens */
+}
+.composer.visible {
+  display: block !important; /* Forces it to accurately render layout spacing */
+}
+.composer-inner {
+  display: flex; 
+  align-items: center; 
+  gap: 8px;
+  background: var(--bg2); 
+  border: 1px solid var(--border);
+  border-radius: 24px; 
+  padding: 6px 6px 6px 16px;
+  transition: 0.2s;
+  position: relative;
+}
+.composer-inner:focus-within { 
+  border-color: var(--accent); 
+  box-shadow: 0 0 0 3px rgba(124,58,237,0.1); 
+}
+.composer-input { 
+  flex: 1; 
+  background: none; 
+  border: none; 
+  color: var(--text0); 
+  font-size: 15px; 
+  max-height: 120px; 
+  resize: none; 
+  line-height: 1.5; 
+  padding-right: 4px;
+}
+.composer-input::placeholder { color: var(--text2); }
+.composer-extras { 
+  display: flex; 
+  align-items: center; 
+  gap: 4px; 
+  position: relative;
+  z-index: 110; /* Keeps buttons cleanly layered above textarea scaling */
+}
+.comp-btn { 
+  width: 36px; 
+  height: 36px; 
+  border-radius: 50%; 
+  display: flex; 
+  align-items: center; 
+  justify-content: center; 
+  font-size: 18px; 
+  color: var(--text2); 
+  cursor: pointer;
+  pointer-events: auto !important; /* Forces the browser to intercept the mouse clicks */
+}
+.comp-btn:hover { background: var(--bg3); color: var(--text0); }
+.comp-btn.vo-active { color: var(--gold); background: rgba(245,158,11,0.12); }
+.comp-btn.send { 
+  background: linear-gradient(135deg, var(--accent), var(--accent2)); 
+  color: white; 
+  box-shadow: 0 2px 10px var(--glow); 
+}
+.comp-btn.send:hover { transform: scale(1.08); }
+.comp-btn.send:active { transform: scale(0.95); }
     /* MODALS */
     .overlay {
       position: fixed; inset: 0;
@@ -1423,7 +1466,10 @@ function openRoom(id, name, isDm) {
   document.getElementById('chat-header').style.display = 'flex';
   document.getElementById('welcome-view').style.display = 'none';
   document.getElementById('msg-container').style.display = 'flex';
-  document.getElementById('composer').style.display = 'block';
+  
+  // FIXED LINE: Use classList to force browser layout layout updates
+  document.getElementById('composer').classList.add('visible');
+  
   renderRooms(allRooms);
   loadMessages(id);
 
