@@ -1,5 +1,6 @@
 """
-ChatSphere Nexus - Production Fixed Backend
+ChatSphere - Premium Python FastAPI Backend 
+Features: Persistent SQLite, Global WebSockets, DMs, Groups, Media Uploads, Message Deletion, View-Once Popups
 """
 
 import asyncio
@@ -21,12 +22,10 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from fastapi.responses import FileResponse, HTMLResponse
 import uvicorn
 
 app = FastAPI(title="ChatSphere Nexus")
 
-# Enable global CORS handling for production web requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -35,10 +34,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Ensure folders exist
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
+# Serve sw.js and manifest.json directly from the app root
+from fastapi.responses import FileResponse, HTMLResponse
+
+@app.get("/sw.js")
+async def service_worker():
+    if Path("sw.js").exists():
+        return FileResponse("sw.js", media_type="application/javascript",
+                            headers={"Service-Worker-Allowed": "/"})
+    return HTMLResponse("// SW not found", media_type="application/javascript")
+
+@app.get("/manifest.json")
+async def manifest():
+    if Path("manifest.json").exists():
+        return FileResponse("manifest.json", media_type="application/manifest+json")
+    return HTMLResponse("{}", media_type="application/json")
+
+@app.get("/")
+async def serve_index():
+    if Path("index.html").exists():
+        return FileResponse("index.html", media_type="text/html")
+    return HTMLResponse("<h1>ChatSphere</h1>")
 
 DB_PATH = "chatsphere.db"
 
@@ -124,21 +144,6 @@ class ConnectionManager:
                 self.disconnect(user_id)
 
 manager = ConnectionManager()
-
-# ─────────────────────────────────────────
-#  Production App Shell Routing
-# ─────────────────────────────────────────
-@app.get("/sw.js")
-async def service_worker():
-    if Path("sw.js").exists():
-        return FileResponse("sw.js", media_type="application/javascript")
-    return HTMLResponse("// SW not found", media_type="application/javascript")
-
-@app.get("/manifest.json")
-async def manifest():
-    if Path("manifest.json").exists():
-        return FileResponse("manifest.json", media_type="application/manifest+json")
-    return HTMLResponse("{}", media_type="application/json")
 
 # ─────────────────────────────────────────
 #  REST API Routes
@@ -331,7 +336,7 @@ async def upload_avatar(user_id: str = Form(...), file: UploadFile = File(...), 
     return {"avatar_url": avatar_url}
 
 # ─────────────────────────────────────────
-#  Global WebSocket Connection Endpoint
+#  Global WebSocket Endpoint
 # ─────────────────────────────────────────
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
@@ -339,23 +344,22 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
+        
         cursor = await db.execute("SELECT display_name, avatar_url FROM users WHERE id = ?", (user_id,))
         user_info = dict(await cursor.fetchone() or {})
         
-    try:
-        while True:
-            data = await websocket.receive_json()
-            event = data.get("type")
+        try:
+            while True:
+                data = await websocket.receive_json()
+                event = data.get("type")
 
-            if event == "message":
-                room_id = data.get("room_id")
-                content = data.get("content", "")
-                is_vo = data.get("is_view_once", False)
-                msg_id = str(uuid.uuid4())
-                now = datetime.utcnow().isoformat()
-                
-                async with aiosqlite.connect(DB_PATH) as db:
-                    db.row_factory = aiosqlite.Row
+                if event == "message":
+                    room_id = data.get("room_id")
+                    content = data.get("content", "")
+                    is_vo = data.get("is_view_once", False)
+                    msg_id = str(uuid.uuid4())
+                    now = datetime.utcnow().isoformat()
+                    
                     await db.execute("""
                         INSERT INTO messages (id, room_id, sender_id, content, message_type, is_view_once, is_viewed, timestamp)
                         VALUES (?, ?, ?, ?, 'text', ?, 0, ?)
@@ -368,62 +372,52 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                     c3 = await db.execute("SELECT user_id FROM room_members WHERE room_id = ?", (room_id,))
                     members = await c3.fetchall()
                     
-                broadcast_msg = {
-                    "type": "new_message",
-                    "message": {
-                        "id": msg_id, "room_id": room_id, "sender_id": user_id,
-                        "content": content, "message_type": "text",
-                        "is_view_once": is_vo, "sender_name": user_info.get("display_name"),
-                        "sender_avatar": user_info.get("avatar_url"),
-                        "room_name": room_info['name'] if room_info else "Chat",
-                        "is_dm": room_info['is_dm'] if room_info else False
+                    broadcast_msg = {
+                        "type": "new_message",
+                        "message": {
+                            "id": msg_id, "room_id": room_id, "sender_id": user_id,
+                            "content": content, "message_type": "text",
+                            "is_view_once": is_vo, "sender_name": user_info.get("display_name"),
+                            "sender_avatar": user_info.get("avatar_url"),
+                            "room_name": room_info['name'] if room_info else "Chat",
+                            "is_dm": room_info['is_dm'] if room_info else False
+                        }
                     }
-                }
-                
-                for m in members:
-                    target_id = m['user_id']
-                    if room_info and room_info['is_dm'] and target_id != user_id:
-                        broadcast_msg["message"]["room_name"] = user_info.get("display_name")
-                    await manager.send_to_user(target_id, broadcast_msg)
+                    
+                    for m in members:
+                        target_id = m['user_id']
+                        if room_info and room_info['is_dm'] and target_id != user_id:
+                            broadcast_msg["message"]["room_name"] = user_info.get("display_name")
+                        await manager.send_to_user(target_id, broadcast_msg)
                         
-            elif event == "viewed_once":
-                msg_id = data.get("msg_id")
-                room_id = data.get("room_id")
-                
-                async with aiosqlite.connect(DB_PATH) as db:
-                    db.row_factory = aiosqlite.Row
+                elif event == "viewed_once":
+                    msg_id = data.get("msg_id")
+                    room_id = data.get("room_id")
                     await db.execute("UPDATE messages SET is_viewed = 1 WHERE id = ?", (msg_id,))
                     await db.commit()
-                    c3 = await db.execute("SELECT user_id FROM room_members WHERE room_id = ?", (room_id,))
-                    members = await c3.fetchall()
                     
-                for m in members:
-                    await manager.send_to_user(m['user_id'], {"type": "message_destroyed", "msg_id": msg_id, "room_id": room_id})
+                    c3 = await db.execute("SELECT user_id FROM room_members WHERE room_id = ?", (room_id,))
+                    for m in await c3.fetchall():
+                        await manager.send_to_user(m['user_id'], {"type": "message_destroyed", "msg_id": msg_id, "room_id": room_id})
 
-            elif event == "delete_message":
-                msg_id = data.get("msg_id")
-                room_id = data.get("room_id")
-                
-                async with aiosqlite.connect(DB_PATH) as db:
-                    db.row_factory = aiosqlite.Row
+                elif event == "delete_message":
+                    msg_id = data.get("msg_id")
+                    room_id = data.get("room_id")
+                    
+                    # WhatsApp style: update record row info to show it's deleted instead of dropping completely
                     await db.execute("""
                         UPDATE messages 
                         SET content = '🚫 This message was deleted', message_type = 'text', file_url = NULL, file_name = NULL 
                         WHERE id = ?
                     """, (msg_id,))
                     await db.commit()
-                    c3 = await db.execute("SELECT user_id FROM room_members WHERE room_id = ?", (room_id,))
-                    members = await c3.fetchall()
                     
-                for m in members:
-                    await manager.send_to_user(m['user_id'], {"type": "message_deleted", "msg_id": msg_id, "room_id": room_id})
+                    c3 = await db.execute("SELECT user_id FROM room_members WHERE room_id = ?", (room_id,))
+                    for m in await c3.fetchall():
+                        await manager.send_to_user(m['user_id'], {"type": "message_deleted", "msg_id": msg_id, "room_id": room_id})
 
-    except WebSocketDisconnect:
-        manager.disconnect(user_id)
+        except WebSocketDisconnect:
+            manager.disconnect(user_id)
 
-# Catch-all rule mounted strictly LAST to protect WebSocket route headers
-@app.get("/{catchall:path}")
-async def serve_index(catchall: str):
-    if Path("index.html").exists():
-        return FileResponse("index.html", media_type="text/html")
-    return HTMLResponse("<h1>ChatSphere Ready</h1>")
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
