@@ -453,71 +453,28 @@
 
     /* COMPOSER */
     .composer {
-  padding: 12px 16px calc(12px + var(--safe-bottom));
-  background: var(--bg1);
-  border-top: 1px solid var(--border);
-  position: relative;
-  z-index: 100;
-  display: none; /* Keeps it hidden until a room opens */
-}
-.composer.visible {
-  display: block !important; /* Forces it to accurately render layout spacing */
-}
-.composer-inner {
-  display: flex; 
-  align-items: center; 
-  gap: 8px;
-  background: var(--bg2); 
-  border: 1px solid var(--border);
-  border-radius: 24px; 
-  padding: 6px 6px 6px 16px;
-  transition: 0.2s;
-  position: relative;
-}
-.composer-inner:focus-within { 
-  border-color: var(--accent); 
-  box-shadow: 0 0 0 3px rgba(124,58,237,0.1); 
-}
-.composer-input { 
-  flex: 1; 
-  background: none; 
-  border: none; 
-  color: var(--text0); 
-  font-size: 15px; 
-  max-height: 120px; 
-  resize: none; 
-  line-height: 1.5; 
-  padding-right: 4px;
-}
-.composer-input::placeholder { color: var(--text2); }
-.composer-extras { 
-  display: flex; 
-  align-items: center; 
-  gap: 4px; 
-  position: relative;
-  z-index: 110; /* Keeps buttons cleanly layered above textarea scaling */
-}
-.comp-btn { 
-  width: 36px; 
-  height: 36px; 
-  border-radius: 50%; 
-  display: flex; 
-  align-items: center; 
-  justify-content: center; 
-  font-size: 18px; 
-  color: var(--text2); 
-  cursor: pointer;
-  pointer-events: auto !important; /* Forces the browser to intercept the mouse clicks */
-}
-.comp-btn:hover { background: var(--bg3); color: var(--text0); }
-.comp-btn.vo-active { color: var(--gold); background: rgba(245,158,11,0.12); }
-.comp-btn.send { 
-  background: linear-gradient(135deg, var(--accent), var(--accent2)); 
-  color: white; 
-  box-shadow: 0 2px 10px var(--glow); 
-}
-.comp-btn.send:hover { transform: scale(1.08); }
-.comp-btn.send:active { transform: scale(0.95); }
+      padding: 12px 16px calc(12px + var(--safe-bottom));
+      background: var(--bg1);
+      border-top: 1px solid var(--border);
+      display: none;
+    }
+    .composer-inner {
+      display: flex; align-items: center; gap: 8px;
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 24px; padding: 6px 6px 6px 16px;
+      transition: 0.2s;
+    }
+    .composer-inner:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(124,58,237,0.1); }
+    .composer-input { flex: 1; background: none; border: none; color: var(--text0); font-size: 15px; max-height: 120px; resize: none; line-height: 1.5; }
+    .composer-input::placeholder { color: var(--text2); }
+    .composer-extras { display: flex; align-items: center; gap: 4px; }
+    .comp-btn { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 18px; color: var(--text2); }
+    .comp-btn:hover { background: var(--bg3); color: var(--text0); }
+    .comp-btn.vo-active { color: var(--gold); background: rgba(245,158,11,0.12); }
+    .comp-btn.send { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: white; box-shadow: 0 2px 10px var(--glow); }
+    .comp-btn.send:hover { transform: scale(1.08); }
+    .comp-btn.send:active { transform: scale(0.95); }
+
     /* MODALS */
     .overlay {
       position: fixed; inset: 0;
@@ -895,14 +852,13 @@
 
 <script>
 // ═══════════════════════════════════════════════
-//  CONFIG & STATE - HARDENED FOR RENDER PROXY HOOKS
+//  CONFIG & STATE
 // ═══════════════════════════════════════════════
 const HOST = window.location.hostname;
 const IS_SECURE = window.location.protocol === 'https:';
-
-// Ensure standard single-origin host bindings without trailing local port conflicts
 const API = IS_SECURE ? `https://${HOST}` : `http://${HOST}:8000`;
 const WS_BASE = IS_SECURE ? `wss://${HOST}` : `ws://${HOST}:8000`;
+
 let user = null, ws = null;
 let currentRoom = null, currentRoomName = null;
 let currentTab = 'dm';
@@ -1058,11 +1014,13 @@ async function checkServerAndRestore() {
   const accounts = await idbGetAll('accounts');
   if (accounts.length === 0) return false;
 
+  // Ping server to see if it's awake and has our user
   try {
     const r = await fetch(`${API}/api/users`, { signal: AbortSignal.timeout(5000) });
     if (!r.ok) throw new Error();
     const users = await r.json();
     
+    // Check if any local accounts are missing from server (server was reset)
     const serverIds = new Set(users.map(u => u.id));
     const missingAccounts = accounts.filter(a => !serverIds.has(a.id));
     
@@ -1071,6 +1029,7 @@ async function checkServerAndRestore() {
       return true;
     }
   } catch(e) {
+    // Server offline - show restore anyway if we have accounts
     if (accounts.length > 0) {
       showRestoreModal(accounts);
       return true;
@@ -1107,6 +1066,7 @@ function selectRestoreAccount(acc) {
   document.getElementById('restore-pass-section').style.display = 'block';
   document.getElementById('restore-pass-label').textContent = `Enter password for @${acc.username}`;
   document.getElementById('restore-pass-inp').focus();
+  // Highlight selected
   document.querySelectorAll('.restore-account-btn').forEach(b => b.style.border = '1px solid var(--border)');
   event.currentTarget.style.border = '1px solid var(--accent)';
 }
@@ -1124,18 +1084,25 @@ async function confirmRestore() {
     return;
   }
 
+  // Try to re-register on server (server was reset)
   try {
     const body = { username: selectedRestoreAccount.username, password: pass, display_name: selectedRestoreAccount.display_name };
     let res = await fetch(`${API}/api/auth/register`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     
     if (!res.ok) {
+      // Try login in case account still exists with same creds
       res = await fetch(`${API}/api/auth/login`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     }
     
     if (res.ok) {
       const data = await res.json();
       user = { ...data.user, password: pass };
-      user.avatar_url = selectedRestoreAccount.avatar_url;
+      // Restore avatar if was on server uploads
+      if (selectedRestoreAccount.avatar_url && !selectedRestoreAccount.avatar_url.startsWith('http')) {
+        user.avatar_url = selectedRestoreAccount.avatar_url;
+      } else {
+        user.avatar_url = selectedRestoreAccount.avatar_url;
+      }
       sessionStorage.setItem('cs_user', JSON.stringify(user));
       sessionStorage.setItem('cs_pass', pass);
       document.getElementById('restore-overlay').style.display = 'none';
@@ -1160,15 +1127,19 @@ function skipRestore() {
 //  INIT
 // ═══════════════════════════════════════════════
 window.addEventListener('DOMContentLoaded', async () => {
+  // Open DB first
   try { db = await openIDB(); } catch(e) { console.warn('IDB unavailable'); }
 
+  // Check local pref
   const pref = localStorage.getItem('cs_local_pref');
   if (pref === null) {
+    // Show permission popup on first visit
     setTimeout(() => { document.getElementById('perm-overlay').style.display = 'flex'; }, 1200);
   } else {
     localStorageEnabled = pref === '1';
   }
 
+  // Check session
   const savedUser = sessionStorage.getItem('cs_user');
   if (savedUser) {
     try {
@@ -1178,6 +1149,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     } catch(e) { sessionStorage.removeItem('cs_user'); }
   }
 
+  // Check if server lost data & we can restore
   if (localStorageEnabled) {
     const restored = await checkServerAndRestore();
     if (!restored) {
@@ -1185,6 +1157,9 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
   }
 });
+
+document.getElementById('l-pass').addEventListener('keydown', e => e.key === 'Enter' && doAuth('login'));
+document.getElementById('r-pass').addEventListener('keydown', e => e.key === 'Enter' && doAuth('register'));
 
 // ═══════════════════════════════════════════════
 //  AUTH
@@ -1467,10 +1442,7 @@ function openRoom(id, name, isDm) {
   document.getElementById('chat-header').style.display = 'flex';
   document.getElementById('welcome-view').style.display = 'none';
   document.getElementById('msg-container').style.display = 'flex';
-  
-  // FIXED LINE: Use classList to force browser layout layout updates
-  document.getElementById('composer').classList.add('visible');
-  
+  document.getElementById('composer').style.display = 'block';
   renderRooms(allRooms);
   loadMessages(id);
 
@@ -1490,7 +1462,7 @@ function goBack() {
 window.addEventListener('resize', () => { isMobile = window.innerWidth <= 700; });
 
 // ═══════════════════════════════════════════════
-//  MESSAGES (Hardened sendMsg Interface)
+//  MESSAGES
 // ═══════════════════════════════════════════════
 async function loadMessages(roomId) {
   const container = document.getElementById('msg-container');
@@ -1501,6 +1473,7 @@ async function loadMessages(roomId) {
     const res = await fetch(`${API}/api/messages/${roomId}`);
     msgs = await res.json();
   } catch(e) {
+    // Try local
     const all = await idbGetAll('messages');
     msgs = all.filter(m => m.room_id === roomId).sort((a,b) => (a.timestamp||'').localeCompare(b.timestamp||''));
   }
@@ -1530,6 +1503,7 @@ async function loadMessages(roomId) {
 function appendMsg(msg) {
   const container = document.getElementById('msg-container');
   
+  // Remove empty state
   const empty = container.querySelector('[style*="margin:auto"]');
   if (empty) empty.remove();
 
@@ -1580,15 +1554,7 @@ function escHtml(str) {
 function sendMsg() {
   const input = document.getElementById('msg-input');
   const text = input.value.trim();
-  if (!text || !currentRoom) return;
-  
-  // Reconnect check for stable operations on Render spin-downs
-  if (!ws || ws.readyState !== 1) {
-    showToast('⚠️ Connecting', 'Attempting to re-establish chat nexus pipeline...', null, null);
-    connectWS();
-    return;
-  }
-  
+  if (!text || !currentRoom || !ws || ws.readyState !== 1) return;
   ws.send(JSON.stringify({ type: 'message', room_id: currentRoom, content: text, is_view_once: voActive }));
   input.value = '';
   input.style.height = '';
@@ -1630,7 +1596,6 @@ async function uploadFile(input) {
 
 function delMsg(msgId) {
   if (!confirm('Delete this message for everyone?')) return;
-  if (!ws || ws.readyState !== 1) return showToast('⚠️ Error', 'Disconnected from websocket channel.', null, null);
   ws.send(JSON.stringify({ type: 'delete_message', msg_id: msgId, room_id: currentRoom }));
 }
 
@@ -1653,7 +1618,7 @@ function openVO(encoded) {
 }
 
 function confirmViewOnce() {
-  if (!voMsgId || !ws || ws.readyState !== 1) return;
+  if (!voMsgId || !ws) return;
   ws.send(JSON.stringify({ type: 'viewed_once', msg_id: voMsgId, room_id: voRoomId }));
   document.getElementById('vo-content').innerHTML = '';
   closeModal('vo-modal');
@@ -1733,6 +1698,7 @@ async function createChat() {
 // ═══════════════════════════════════════════════
 function closeModal(id) { document.getElementById(id).classList.remove('active'); }
 
+// Close overlay on backdrop click
 document.querySelectorAll('.overlay').forEach(el => {
   el.addEventListener('click', e => { if (e.target === el) el.classList.remove('active'); });
 });
